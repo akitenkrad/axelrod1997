@@ -1,7 +1,8 @@
 mod config;
-mod culture;
-mod grid;
+mod mechanisms;
 mod metrics;
+mod simulation;
+mod world;
 
 use std::fs::{self, File};
 use std::io::BufWriter;
@@ -10,12 +11,10 @@ use std::path::Path;
 use chrono::Local;
 use clap::{Parser, Subcommand};
 use csv::Writer;
-use rand::SeedableRng;
-use rand_chacha::ChaCha8Rng;
+
+use socsim_core::derive_seed as socsim_derive_seed;
 
 use config::{SimulateConfig, SweepConfig};
-use culture::run_until_stable;
-use grid::Grid;
 use metrics::count_stable_regions;
 
 // ---------------------------------------------------------------------------
@@ -173,21 +172,16 @@ fn execute_run(
     max_events: usize,
     seed: u64,
 ) -> (bool, usize, metrics::RunMetrics) {
-    let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    let grid = Grid::random_init(width, height, features, traits, &mut rng);
-    let result = run_until_stable(grid, max_events, &mut rng);
-    let m = count_stable_regions(&result.grid);
+    let result = simulation::run(width, height, features, traits, max_events, seed);
+    let m = count_stable_regions(&result.world);
     (result.converged, result.n_events, m)
 }
 
 /// 派生シードを作成する．seed が None のときはランダムに生成．
+/// 指定時は socsim の決定論的シード派生 `derive_seed(base, &[features, traits, run])` を使う．
 fn derive_seed(base: Option<u64>, features: usize, traits: usize, run: usize) -> u64 {
     match base {
-        Some(s) => s
-            .wrapping_mul(1_000_003)
-            .wrapping_add((features as u64).wrapping_mul(10_007))
-            .wrapping_add((traits as u64).wrapping_mul(101))
-            .wrapping_add(run as u64),
+        Some(s) => socsim_derive_seed(s, &[features as u64, traits as u64, run as u64]),
         None => rand::random::<u64>(),
     }
 }

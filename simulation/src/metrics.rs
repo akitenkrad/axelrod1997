@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
-use crate::grid::Grid;
+use crate::world::AxelrodWorld;
 
 /// 1試行分の集計メトリクス
 #[derive(Debug, Clone)]
@@ -15,8 +15,9 @@ pub struct RunMetrics {
 
 /// 安定文化地域数をカウントする．
 /// 「同じ文化ベクトルを持つサイトの4連結成分」を BFS で列挙する．
-pub fn count_stable_regions(grid: &Grid) -> RunMetrics {
-    let n = grid.n_sites();
+/// 連結は事前計算済みのフォン・ノイマン近傍表(`world.neighbors`)を使う．
+pub fn count_stable_regions(world: &AxelrodWorld) -> RunMetrics {
+    let n = world.n_sites();
     let mut visited = vec![false; n];
     let mut n_regions = 0usize;
     let mut max_region_size = 0usize;
@@ -33,8 +34,8 @@ pub fn count_stable_regions(grid: &Grid) -> RunMetrics {
         queue.push_back(start);
 
         while let Some(cur) = queue.pop_front() {
-            for nb in grid.neighbors_4(cur) {
-                if !visited[nb] && grid.sites[cur] == grid.sites[nb] {
+            for &nb in &world.neighbors[cur] {
+                if !visited[nb] && world.cultures[cur] == world.cultures[nb] {
                     visited[nb] = true;
                     size += 1;
                     queue.push_back(nb);
@@ -47,9 +48,9 @@ pub fn count_stable_regions(grid: &Grid) -> RunMetrics {
         }
     }
 
-    // 相異なる文化ベクトルの数は HashSet で数える
+    // 相異なる文化ベクトルの数は HashSet で数える．
     let mut set: HashSet<&Vec<usize>> = HashSet::new();
-    for site in &grid.sites {
+    for site in &world.cultures {
         set.insert(site);
     }
 
