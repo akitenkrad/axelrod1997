@@ -15,7 +15,7 @@ pub struct RunMetrics {
 
 /// 安定文化地域数をカウントする．
 /// 「同じ文化ベクトルを持つサイトの4連結成分」を BFS で列挙する．
-/// 連結は事前計算済みのフォン・ノイマン近傍表(`world.neighbors`)を使う．
+/// 連結は事前計算済みのフォン・ノイマン近傍表(`world.adjacency`)を使う．
 pub fn count_stable_regions(world: &AxelrodWorld) -> RunMetrics {
     let n = world.n_sites();
     let mut visited = vec![false; n];
@@ -34,8 +34,8 @@ pub fn count_stable_regions(world: &AxelrodWorld) -> RunMetrics {
         queue.push_back(start);
 
         while let Some(cur) = queue.pop_front() {
-            for &nb in &world.neighbors[cur] {
-                if !visited[nb] && world.cultures[cur] == world.cultures[nb] {
+            for &nb in world.adjacency.neighbors(cur) {
+                if !visited[nb] && world.culture(cur) == world.culture(nb) {
                     visited[nb] = true;
                     size += 1;
                     queue.push_back(nb);
@@ -50,7 +50,7 @@ pub fn count_stable_regions(world: &AxelrodWorld) -> RunMetrics {
 
     // 相異なる文化ベクトルの数は HashSet で数える．
     let mut set: HashSet<&Vec<usize>> = HashSet::new();
-    for site in &world.cultures {
+    for site in world.cells.cells() {
         set.insert(site);
     }
 

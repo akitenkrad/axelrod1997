@@ -36,10 +36,10 @@ fn random_init_has_correct_shape_and_value_range() {
     assert_eq!(world.width(), width);
     assert_eq!(world.height(), height);
     assert_eq!(world.n_features, features);
-    assert_eq!(world.cultures.len(), width * height);
+    assert_eq!(world.cells.cells().len(), width * height);
 
     // 各サイトの文化ベクトルは長さ f
-    for site in &world.cultures {
+    for site in world.cells.cells() {
         assert_eq!(site.len(), features);
         // 各特性値は 0..q の範囲に収まる
         for &v in site {
@@ -54,7 +54,7 @@ fn random_init_is_deterministic_with_same_seed() {
     let mut rng2 = SimRng::from_seed(42);
     let g1 = AxelrodWorld::random_init(4, 4, 3, 5, &mut rng1, TEST_T_MAX);
     let g2 = AxelrodWorld::random_init(4, 4, 3, 5, &mut rng2, TEST_T_MAX);
-    assert_eq!(g1.cultures, g2.cultures);
+    assert_eq!(g1.cells.cells(), g2.cells.cells());
 }
 
 // --------------------------------------------------------------------------- //

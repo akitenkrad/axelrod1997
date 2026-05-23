@@ -31,12 +31,12 @@ pub fn similarity(a: &[usize], b: &[usize]) -> f64 {
 /// グローバル安定判定: 全ての隣接ペアについて sim ∈ {0, 1} が成り立つか．
 /// 一つでも 0 < sim < 1 の隣接があれば false．
 ///
-/// 事前計算済みの近傍表(`world.neighbors`)を使う．各ペアを2回見る(i→j と j→i)が
+/// 事前計算済みの CSR 近傍表(`world.adjacency`)を使う．各ペアを2回見る(i→j と j→i)が
 /// 判定は対称なので正しい(micro-opt より正当性を優先)．
 pub fn is_stable(world: &AxelrodWorld) -> bool {
     for i in 0..world.n_sites() {
-        for &j in &world.neighbors[i] {
-            let sim = similarity(&world.cultures[i], &world.cultures[j]);
+        for &j in world.adjacency.neighbors(i) {
+            let sim = similarity(world.culture(i), world.culture(j));
             if sim > 0.0 && sim < 1.0 {
                 return false;
             }
@@ -55,7 +55,7 @@ pub fn is_stable(world: &AxelrodWorld) -> bool {
 ///   5. それ以外のときは確率 sim で，差がある特徴を1つランダムに選んで nb の値をコピー
 fn run_event(world: &mut AxelrodWorld, rng: &mut SimRng) -> bool {
     let s = rng.gen_range(0..world.n_sites());
-    let neighbors = &world.neighbors[s];
+    let neighbors = world.adjacency.neighbors(s);
     if neighbors.is_empty() {
         return false;
     }
@@ -66,7 +66,7 @@ fn run_event(world: &mut AxelrodWorld, rng: &mut SimRng) -> bool {
         return false;
     }
 
-    let sim = similarity(&world.cultures[s], &world.cultures[nb]);
+    let sim = similarity(world.culture(s), world.culture(nb));
 
     // sim == 0: 共通点が無いので相互作用しない．
     // sim == 1: 全て同じなので模倣する余地がない．
@@ -81,15 +81,18 @@ fn run_event(world: &mut AxelrodWorld, rng: &mut SimRng) -> bool {
 
     // 差がある特徴を列挙して1つランダムに選ぶ．
     let diffs: Vec<usize> = (0..world.n_features)
-        .filter(|&f| world.cultures[s][f] != world.cultures[nb][f])
+        .filter(|&f| world.culture(s)[f] != world.culture(nb)[f])
         .collect();
 
     // sim < 1 なので diffs は必ず 1 以上．
     debug_assert!(!diffs.is_empty());
     let feat = diffs[rng.gen_range(0..diffs.len())];
 
-    let new_val = world.cultures[nb][feat];
-    world.cultures[s][feat] = new_val;
+    let new_val = world.culture(nb)[feat];
+    world
+        .cells
+        .get_idx_mut(s)
+        .expect("idx が範囲外(run_event write)")[feat] = new_val;
     true
 }
 

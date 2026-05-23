@@ -62,24 +62,23 @@ pub fn run(
     let mut n_events = 0usize;
     let mut converged = false;
 
-    for _ in 0..t_max {
-        sim.step().expect("シミュレーションステップの実行に失敗");
-
-        let delta = *sim
-            .scratch()
+    // run_observed は `while !clock.is_done() && !stop_requested` で step を回し，
+    // 実行された各 step(停止要求 step を含む)につき observer を1回呼ぶ．これは旧来の
+    // 手書きループ(`for _ in 0..t_max { step(); read scratch; if stop break }`)と
+    // step 数・RNG 使用が等価である．
+    sim.run_observed(|report| {
+        let delta = *report
+            .scratch
             .get::<usize>("delta_events")
             .expect("delta_events が scratch に存在しません");
         n_events += delta;
 
-        converged = *sim
-            .scratch()
+        converged = *report
+            .scratch
             .get::<bool>("converged")
             .expect("converged が scratch に存在しません");
-
-        if sim.stop_requested() {
-            break;
-        }
-    }
+    })
+    .expect("シミュレーションの実行に失敗");
 
     // 実行イベント数を max_events で頭打ち(バッチ境界で超過しうるため)．
     if n_events > max_events {

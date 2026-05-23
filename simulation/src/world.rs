@@ -5,12 +5,15 @@
 //! mutate するだけである．したがって占有インデックス([`socsim_grid::GridIndex`])は
 //! 使わず，[`socsim_grid::Grid`] は近傍/位相の計算にのみ用いる．
 //!
-//! 旧実装(`grid.rs`)の手書き近傍計算(`neighbors_4`)は socsim-grid の
-//! [`Grid::neighbors`] でフォン・ノイマン近傍を初期化時に事前計算し，フラット
-//! インデックス(`r*width + c`)の隣接表 `neighbors` として保持する(ホットループ高速化)．
+//! セル状態は socsim-grid の [`CellGrid<Culture>`] に保持する(セル値 = 文化ベクトル，
+//! フラットインデックス `idx = r*cols + c`)．近傍は同じグリッドから
+//! [`Grid::adjacency`](socsim_grid::Grid::adjacency) で CSR の [`Adjacency`] を一度だけ
+//! 事前計算して保持する(ホットループ高速化)．`Adjacency::neighbors(idx)` は旧実装の
+//! 手書き近傍表と同じ順序(ソート済み row-major のフラットインデックス)を返すため，
+//! RNG を消費する選択の draw 順序は変わらない．
 
 use socsim_core::{AgentId, SimClock, SimRng, WorldState};
-use socsim_grid::{Boundary, Grid, Neighborhood};
+use socsim_grid::{Adjacency, Boundary, CellGrid, Grid, Neighborhood};
 
 use rand::Rng;
 
@@ -22,18 +25,17 @@ pub type Culture = Vec<usize>;
 pub struct AxelrodWorld {
     /// シミュレーションクロック
     pub clock: SimClock,
-    /// 近傍/位相計算用のグリッド(rows=height, cols=width)．近傍事前計算後は保持のみ．
-    #[allow(dead_code)]
-    pub grid: Grid,
-    /// 各サイトの文化ベクトル．フラットインデックス(idx = r*width + c)．
-    pub cultures: Vec<Culture>,
+    /// 各サイトの文化ベクトルを保持するセルグリッド(セル値 = 文化ベクトル，
+    /// フラットインデックス idx = r*cols + c)．セル状態の単一の真実源．
+    pub cells: CellGrid<Culture>,
     /// 特徴数 f (文化ベクトルの長さ)
     pub n_features: usize,
     /// 特性数 q (各特徴が取りうる値の数)．init 後は保持のみ．
     #[allow(dead_code)]
     pub n_traits: usize,
-    /// 各サイトのフォン・ノイマン近傍(フラットインデックス)の事前計算表．
-    pub neighbors: Vec<Vec<usize>>,
+    /// 各サイトのフォン・ノイマン近傍(フラットインデックス)の CSR 事前計算表．
+    /// `cells.grid()` から構築する．
+    pub adjacency: Adjacency,
     /// グリッド幅(列数)．
     width: usize,
     /// グリッド高さ(行数)．
@@ -50,27 +52,21 @@ impl AxelrodWorld {
         cultures: Vec<Culture>,
         t_max: u64,
     ) -> Self {
+        debug_assert_eq!(cultures.len(), width * height);
         let grid = Grid::new(height, width, Boundary::Fixed);
-        let n = width * height;
-        // 近傍を事前計算: フラット idx → (r, c) → VonNeumann 近傍 → フラット idx．
-        let mut neighbors: Vec<Vec<usize>> = Vec::with_capacity(n);
-        for idx in 0..n {
-            let r = idx / width;
-            let c = idx % width;
-            let ns: Vec<usize> = grid
-                .neighbors(r, c, Neighborhood::VonNeumann)
-                .into_iter()
-                .map(|(nr, nc)| nr * width + nc)
-                .collect();
-            neighbors.push(ns);
-        }
+        // VonNeumann 近傍を CSR で事前計算(フラット idx → 近傍フラット idx)．
+        let adjacency = grid.adjacency(Neighborhood::VonNeumann);
+        // 文化ベクトルを CellGrid に格納(row-major で消費，順序は不変)．
+        let mut iter = cultures.into_iter();
+        let cells = CellGrid::from_fn(grid, |_, _| {
+            iter.next().expect("cultures の要素数が width*height に満たない")
+        });
         AxelrodWorld {
             clock: SimClock::new(t_max),
-            grid,
-            cultures,
+            cells,
             n_features,
             n_traits,
-            neighbors,
+            adjacency,
             width,
             height,
         }
@@ -96,6 +92,14 @@ impl AxelrodWorld {
     #[inline]
     pub fn n_sites(&self) -> usize {
         self.width * self.height
+    }
+
+    /// フラットインデックス `idx` の文化ベクトルを借用する．
+    #[inline]
+    pub fn culture(&self, idx: usize) -> &Culture {
+        self.cells
+            .get_idx(idx)
+            .expect("idx が範囲外(culture)")
     }
 
     /// グリッド幅(列数)．
