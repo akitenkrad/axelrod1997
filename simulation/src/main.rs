@@ -1,8 +1,4 @@
-mod config;
-mod mechanisms;
-mod metrics;
-mod simulation;
-mod world;
+use axelrod_culture::{config, metrics, simulation};
 
 use std::fs::{self, File};
 use std::io::BufWriter;
@@ -204,7 +200,7 @@ fn update_latest_symlink(base_dir: &Path, target_name: &str) {
 
 fn cmd_simulate(args: SimulateArgs) {
     let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
-    let run_name = timestamp.clone();
+    let run_name = format!("simulate_{}", timestamp);
     let out_dir = format!("{}/{}", args.output_dir, run_name);
     fs::create_dir_all(&out_dir).expect("出力ディレクトリの作成に失敗");
 
@@ -316,7 +312,7 @@ fn cmd_simulate(args: SimulateArgs) {
 
 fn cmd_sweep(args: SweepArgs) {
     let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
-    let dir_name = format!("{}_sweep", timestamp);
+    let dir_name = format!("sweep_{}", timestamp);
     let sweep_dir = format!("{}/{}", args.output_dir, dir_name);
     fs::create_dir_all(&sweep_dir).expect("sweep ディレクトリの作成に失敗");
 
@@ -366,7 +362,7 @@ fn cmd_sweep(args: SweepArgs) {
     println!("出力先: {}", sweep_dir);
     println!("-----------------------------------------------");
 
-    // sweep_config.json
+    // config.json
     let sweep_config_json = serde_json::json!({
         "subcommand": "sweep",
         "width": cfg.width,
@@ -385,14 +381,14 @@ fn cmd_sweep(args: SweepArgs) {
         "max_events": cfg.max_events,
         "seed": cfg.seed,
     });
-    let config_path = format!("{}/sweep_config.json", sweep_dir);
-    let file = File::create(&config_path).expect("sweep_config.json の作成に失敗");
+    let config_path = format!("{}/config.json", sweep_dir);
+    let file = File::create(&config_path).expect("config.json の作成に失敗");
     serde_json::to_writer_pretty(BufWriter::new(file), &sweep_config_json)
-        .expect("sweep_config.json の書き込みに失敗");
+        .expect("config.json の書き込みに失敗");
 
-    // sweep_summary.csv
-    let summary_path = format!("{}/sweep_summary.csv", sweep_dir);
-    let file = File::create(&summary_path).expect("sweep_summary.csv の作成に失敗");
+    // metrics.csv
+    let summary_path = format!("{}/metrics.csv", sweep_dir);
+    let file = File::create(&summary_path).expect("metrics.csv の作成に失敗");
     let mut wtr = Writer::from_writer(BufWriter::new(file));
 
     let mut idx = 0usize;
@@ -448,8 +444,8 @@ fn cmd_sweep(args: SweepArgs) {
 
     println!("-----------------------------------------------");
     println!("スイープ完了．");
-    println!("サマリ → {}/sweep_summary.csv", sweep_dir);
-    println!("設定   → {}/sweep_config.json", sweep_dir);
+    println!("メトリクス → {}/metrics.csv", sweep_dir);
+    println!("設定   → {}/config.json", sweep_dir);
 }
 
 // ---------------------------------------------------------------------------

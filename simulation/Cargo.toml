@@ -3,6 +3,10 @@ name = "axelrod-culture"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "axelrod_culture"
+path = "src/lib.rs"
+
 [[bin]]
 name = "axelrod"
 path = "src/main.rs"
