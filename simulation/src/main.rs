@@ -1,17 +1,11 @@
-use axelrod_culture::{config, metrics, simulation};
+use axelrod_culture::{metrics, record, simulation};
 
-use std::fs::{self, File};
-use std::io::BufWriter;
-use std::path::Path;
-
-use chrono::Local;
 use clap::{Parser, Subcommand};
-use csv::Writer;
+use runvault::{Lineage, Run, RunOptions};
+use serde::Serialize;
 
-use socsim_core::derive_seed as socsim_derive_seed;
-
-use config::{SimulateConfig, SweepConfig};
 use metrics::count_stable_regions;
+use record::{Trial, DOMAIN, EXPERIMENT, REPO_ID};
 
 // ---------------------------------------------------------------------------
 // CLI 定義
@@ -61,11 +55,11 @@ struct SimulateArgs {
     #[arg(long, default_value_t = 1_000_000)]
     max_events: usize,
 
-    /// 乱数シード（省略時はランダム．指定すると各 run で決定的に派生）
+    /// 乱数シード（省略時はランダムに実体化し，run の master_seed として記録する）
     #[arg(long)]
     seed: Option<u64>,
 
-    /// 結果出力ディレクトリ
+    /// results ルート（この下に <experiment>/<run_slug>/ ができる）
     #[arg(long, default_value = "results")]
     output_dir: String,
 }
@@ -112,86 +106,135 @@ struct SweepArgs {
     #[arg(long, default_value_t = 1_000_000)]
     max_events: usize,
 
-    /// 乱数シード（省略時はランダム）
+    /// 乱数シード（省略時はランダムに実体化し，各子 run の master_seed として記録する）
     #[arg(long)]
     seed: Option<u64>,
 
-    /// 結果出力ベースディレクトリ
+    /// results ルート（この下に <experiment>/<run_slug>/ ができる）
     #[arg(long, default_value = "results")]
     output_dir: String,
 }
 
 // ---------------------------------------------------------------------------
-// CSV 出力用の行構造体
+// /parameters に書く実験条件
+//
+// 条件だけを持つ．出力先は run ディレクトリそのものなので持たない．
+// 計算結果 (収束率・地域数) は指標であって条件ではないので入れない．
 // ---------------------------------------------------------------------------
 
-#[derive(serde::Serialize)]
-struct SimulateRow {
-    run: usize,
+/// `simulate` の 1 条件．`sweep` の子 run も同じ形を持つ．
+#[derive(Serialize, Debug, Clone)]
+struct SimulateParameters {
     width: usize,
     height: usize,
     features: usize,
     traits: usize,
+    runs: usize,
+    max_events: usize,
+    /// 実体化済みの base seed．試行ごとのシードはここから決定的に派生する．
     seed: u64,
-    converged: bool,
-    n_events: usize,
-    n_stable_regions: usize,
-    max_region_size: usize,
-    n_distinct_cultures: usize,
 }
 
-#[derive(serde::Serialize)]
-struct SweepRow {
-    features: usize,
-    traits: usize,
-    run: usize,
+/// `sweep` 親のグリッド定義．
+#[derive(Serialize, Debug, Clone)]
+struct SweepParameters {
     width: usize,
     height: usize,
-    seed: u64,
-    converged: bool,
-    n_events: usize,
-    n_stable_regions: usize,
-    max_region_size: usize,
-    n_distinct_cultures: usize,
-}
-
-// ---------------------------------------------------------------------------
-// ユーティリティ
-// ---------------------------------------------------------------------------
-
-/// 単一試行を実行してメトリクスを返す
-fn execute_run(
-    width: usize,
-    height: usize,
-    features: usize,
-    traits: usize,
+    features: AxisRange,
+    traits: AxisRange,
+    runs: usize,
     max_events: usize,
     seed: u64,
-) -> (bool, usize, metrics::RunMetrics) {
-    let result = simulation::run(width, height, features, traits, max_events, seed);
-    let m = count_stable_regions(&result.world);
-    (result.converged, result.n_events, m)
 }
 
-/// 派生シードを作成する．seed が None のときはランダムに生成．
-/// 指定時は socsim の決定論的シード派生 `derive_seed(base, &[features, traits, run])` を使う．
-fn derive_seed(base: Option<u64>, features: usize, traits: usize, run: usize) -> u64 {
-    match base {
-        Some(s) => socsim_derive_seed(s, &[features as u64, traits as u64, run as u64]),
-        None => rand::random::<u64>(),
+#[derive(Serialize, Debug, Clone)]
+struct AxisRange {
+    min: usize,
+    max: usize,
+    step: usize,
+}
+
+impl AxisRange {
+    /// 端点を含む等差列に展開する．`step` は 1 未満にならないよう丸める．
+    fn values(&self) -> Vec<usize> {
+        let step = self.step.max(1);
+        let mut out = Vec::new();
+        let mut v = self.min;
+        while v <= self.max {
+            out.push(v);
+            v += step;
+        }
+        out
     }
 }
 
-/// latest シンボリックリンクを更新する（Unix のみ）
-fn update_latest_symlink(base_dir: &Path, target_name: &str) {
-    let symlink_path = base_dir.join("latest");
-    if symlink_path.is_symlink() || symlink_path.exists() {
-        let _ = fs::remove_file(&symlink_path);
+// ---------------------------------------------------------------------------
+// 1 条件の実行
+// ---------------------------------------------------------------------------
+
+/// 1 条件を `runs` 回試行し，各試行を `terminal` イベントとして記録する．
+///
+/// 試行は子 run にしない．1 つの run の中の観測主体 (`unit_id = trial-N`) として
+/// 扱うので，生存時間解析はこの run の `events.jsonl` だけで組める．
+fn run_condition(rv: &mut Run, p: &SimulateParameters, verbose: bool) -> Vec<Trial> {
+    let mut trials = Vec::with_capacity(p.runs);
+
+    for index in 0..p.runs {
+        let seed = record::trial_seed(p.seed, p.features, p.traits, index);
+        let result = simulation::run(
+            p.width,
+            p.height,
+            p.features,
+            p.traits,
+            p.max_events,
+            seed,
+        );
+        let m = count_stable_regions(&result.world);
+
+        let trial = Trial {
+            index,
+            seed,
+            converged: result.converged,
+            n_events: result.n_events,
+            max_events: p.max_events,
+            metrics: m,
+        };
+
+        if verbose {
+            println!(
+                "[{}/{}] seed={:>20} converged={:<5} events={:>10} regions={:>3} max_region={:>3} distinct={:>3}",
+                index + 1,
+                p.runs,
+                trial.seed,
+                trial.converged,
+                trial.n_events,
+                trial.metrics.n_stable_regions,
+                trial.metrics.max_region_size,
+                trial.metrics.n_distinct_cultures,
+            );
+        }
+
+        record::log_trial(rv, &trial);
+        trials.push(trial);
     }
-    #[cfg(unix)]
-    {
-        let _ = std::os::unix::fs::symlink(target_name, &symlink_path);
+
+    record::log_run_summary(rv, &trials);
+    trials
+}
+
+fn n_converged(trials: &[Trial]) -> usize {
+    trials.iter().filter(|t| t.converged).count()
+}
+
+fn mean_regions(trials: &[Trial]) -> f64 {
+    if trials.is_empty() {
+        return f64::NAN;
     }
+    trials
+        .iter()
+        .map(|t| t.metrics.n_stable_regions as f64)
+        .sum::<f64>()
+        / trials.len() as f64
 }
 
 // ---------------------------------------------------------------------------
@@ -199,111 +242,56 @@ fn update_latest_symlink(base_dir: &Path, target_name: &str) {
 // ---------------------------------------------------------------------------
 
 fn cmd_simulate(args: SimulateArgs) {
-    let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
-    let run_name = format!("simulate_{}", timestamp);
-    let out_dir = format!("{}/{}", args.output_dir, run_name);
-    fs::create_dir_all(&out_dir).expect("出力ディレクトリの作成に失敗");
+    // シードを実体化してから記録する．--seed 省略時に試行側で rand::random に
+    // 落とすと，実際に使われたシードがどこにも残らない．
+    let seed = args.seed.unwrap_or_else(rand::random::<u64>);
 
-    let cfg = SimulateConfig {
+    let params = SimulateParameters {
         width: args.width,
         height: args.height,
         features: args.features,
         traits: args.traits,
         runs: args.runs,
         max_events: args.max_events,
-        seed: args.seed,
-        output_dir: args.output_dir.clone(),
+        seed,
     };
+
+    let mut rv = Run::start(
+        RunOptions::new(EXPERIMENT, "simulate")
+            .repo_id(REPO_ID)
+            .domain(DOMAIN)
+            .results_root(&args.output_dir)
+            .parameters(&params)
+            .expect("runvault: parameters の組み立てに失敗")
+            .seed_pointers(["/seed"])
+            .master_seed(seed)
+            .replication(record::replication()),
+    )
+    .expect("runvault: run の開始に失敗");
 
     println!("=== Axelrod 文化拡散モデル 再現実験 ===");
     println!(
         "グリッド: {}×{} | f={} | q={} | runs={} | max_events={}",
-        cfg.width, cfg.height, cfg.features, cfg.traits, cfg.runs, cfg.max_events
+        params.width, params.height, params.features, params.traits, params.runs, params.max_events
     );
-    println!("シード (base): {:?}", cfg.seed);
-    println!("出力先: {}", out_dir);
+    println!("シード (base): {}", seed);
+    println!("出力先: {}", rv.dir().display());
     println!("---------------------------------------");
 
-    // config.json を出力
-    let config_json = serde_json::json!({
-        "subcommand": "simulate",
-        "width": cfg.width,
-        "height": cfg.height,
-        "features": cfg.features,
-        "traits": cfg.traits,
-        "runs": cfg.runs,
-        "max_events": cfg.max_events,
-        "seed": cfg.seed,
-    });
-    let config_path = format!("{}/config.json", out_dir);
-    let file = File::create(&config_path).expect("config.json の作成に失敗");
-    serde_json::to_writer_pretty(BufWriter::new(file), &config_json)
-        .expect("config.json の書き込みに失敗");
+    let trials = run_condition(&mut rv, &params, true);
 
-    // metrics.csv を書き込む
-    let metrics_path = format!("{}/metrics.csv", out_dir);
-    let file = File::create(&metrics_path).expect("metrics.csv の作成に失敗");
-    let mut wtr = Writer::from_writer(BufWriter::new(file));
-
-    let mut sum_regions = 0.0f64;
-    let mut n_converged = 0usize;
-
-    for run in 0..cfg.runs {
-        let seed = derive_seed(cfg.seed, cfg.features, cfg.traits, run);
-        let (converged, n_events, m) = execute_run(
-            cfg.width,
-            cfg.height,
-            cfg.features,
-            cfg.traits,
-            cfg.max_events,
-            seed,
-        );
-
-        if converged {
-            n_converged += 1;
-        }
-        sum_regions += m.n_stable_regions as f64;
-
-        println!(
-            "[{}/{}] seed={:>20} converged={:<5} events={:>10} regions={:>3} max_region={:>3} distinct={:>3}",
-            run + 1,
-            cfg.runs,
-            seed,
-            converged,
-            n_events,
-            m.n_stable_regions,
-            m.max_region_size,
-            m.n_distinct_cultures,
-        );
-
-        let row = SimulateRow {
-            run,
-            width: cfg.width,
-            height: cfg.height,
-            features: cfg.features,
-            traits: cfg.traits,
-            seed,
-            converged,
-            n_events,
-            n_stable_regions: m.n_stable_regions,
-            max_region_size: m.max_region_size,
-            n_distinct_cultures: m.n_distinct_cultures,
-        };
-        wtr.serialize(row).expect("メトリクス行の書き込みに失敗");
-    }
-    wtr.flush().expect("フラッシュに失敗");
-
-    // latest シンボリックリンクを更新
-    update_latest_symlink(Path::new(&cfg.output_dir), &run_name);
-
-    let mean_regions = sum_regions / (cfg.runs as f64);
     println!("---------------------------------------");
     println!(
         "完了: {}/{} が収束 | 平均 n_stable_regions = {:.2}",
-        n_converged, cfg.runs, mean_regions
+        n_converged(&trials),
+        trials.len(),
+        mean_regions(&trials)
     );
-    println!("設定   → {}/config.json", out_dir);
-    println!("メトリクス → {}/metrics.csv", out_dir);
+
+    let dir = rv.finish().expect("runvault: run の完了に失敗");
+    println!("設定       → {}/config.json", dir.display());
+    println!("集約指標   → {}/metrics.csv", dir.display());
+    println!("試行ごと   → {}/events.jsonl", dir.display());
 }
 
 // ---------------------------------------------------------------------------
@@ -311,141 +299,133 @@ fn cmd_simulate(args: SimulateArgs) {
 // ---------------------------------------------------------------------------
 
 fn cmd_sweep(args: SweepArgs) {
-    let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
-    let dir_name = format!("sweep_{}", timestamp);
-    let sweep_dir = format!("{}/{}", args.output_dir, dir_name);
-    fs::create_dir_all(&sweep_dir).expect("sweep ディレクトリの作成に失敗");
+    let seed = args.seed.unwrap_or_else(rand::random::<u64>);
 
-    let cfg = SweepConfig {
+    let sweep_params = SweepParameters {
         width: args.width,
         height: args.height,
-        features_min: args.features_min,
-        features_max: args.features_max,
-        features_step: args.features_step,
-        traits_min: args.traits_min,
-        traits_max: args.traits_max,
-        traits_step: args.traits_step,
+        features: AxisRange {
+            min: args.features_min,
+            max: args.features_max,
+            step: args.features_step,
+        },
+        traits: AxisRange {
+            min: args.traits_min,
+            max: args.traits_max,
+            step: args.traits_step,
+        },
         runs: args.runs,
         max_events: args.max_events,
-        seed: args.seed,
-        output_dir: args.output_dir.clone(),
+        seed,
     };
 
-    // 探索する (f, q) の列挙
-    let mut feature_vals: Vec<usize> = Vec::new();
-    {
-        let mut f = cfg.features_min;
-        while f <= cfg.features_max {
-            feature_vals.push(f);
-            f += cfg.features_step.max(1);
-        }
-    }
-    let mut traits_vals: Vec<usize> = Vec::new();
-    {
-        let mut q = cfg.traits_min;
-        while q <= cfg.traits_max {
-            traits_vals.push(q);
-            q += cfg.traits_step.max(1);
-        }
-    }
+    let feature_vals = sweep_params.features.values();
+    let traits_vals = sweep_params.traits.values();
+    assert!(
+        !feature_vals.is_empty() && !traits_vals.is_empty(),
+        "探索するグリッドが空です (features_min > features_max か traits_min > traits_max)"
+    );
 
     let n_combos = feature_vals.len() * traits_vals.len();
-    let n_total = n_combos * cfg.runs;
+    let n_total = n_combos * sweep_params.runs;
+
+    // 親 run: グリッド定義そのものを parameters に持つ．個別条件の指標は書かない．
+    // 親は単一の master_seed を持たない (条件ごとの子がそれぞれ持つ)．base seed は
+    // /parameters.seed と seed_pointers 経由で execution_hash に残る．
+    // sweep_id は runvault が親の run_slug で埋める．
+    let parent = Run::start(
+        RunOptions::new(EXPERIMENT, "sweep")
+            .repo_id(REPO_ID)
+            .domain(DOMAIN)
+            .results_root(&args.output_dir)
+            .parameters(&sweep_params)
+            .expect("runvault: sweep の parameters の組み立てに失敗")
+            .seed_pointers(["/seed"])
+            .sweep_parent()
+            .replication(record::replication()),
+    )
+    .expect("runvault: sweep 親 run の開始に失敗");
+
+    let sweep_id = parent
+        .sweep_id()
+        .expect("runvault: sweep 親に sweep_id がありません")
+        .to_string();
+    let parent_run_uid = parent.run_uid().to_string();
 
     println!("=== Axelrod 文化拡散モデル パラメータスイープ ===");
     println!(
         "グリッド: {}×{} | f={:?} | q={:?} | runs={} | max_events={}",
-        cfg.width, cfg.height, feature_vals, traits_vals, cfg.runs, cfg.max_events
+        sweep_params.width,
+        sweep_params.height,
+        feature_vals,
+        traits_vals,
+        sweep_params.runs,
+        sweep_params.max_events
     );
-    println!("シード (base): {:?}", cfg.seed);
-    println!("合計 {} 試行 ({} 条件 × {} runs)", n_total, n_combos, cfg.runs);
-    println!("出力先: {}", sweep_dir);
+    println!("シード (base): {}", seed);
+    println!("合計 {} 試行 ({} 条件 × {} runs)", n_total, n_combos, sweep_params.runs);
+    println!("出力先: {}", parent.dir().display());
     println!("-----------------------------------------------");
-
-    // config.json
-    let sweep_config_json = serde_json::json!({
-        "subcommand": "sweep",
-        "width": cfg.width,
-        "height": cfg.height,
-        "features": {
-            "min": cfg.features_min,
-            "max": cfg.features_max,
-            "step": cfg.features_step,
-        },
-        "traits": {
-            "min": cfg.traits_min,
-            "max": cfg.traits_max,
-            "step": cfg.traits_step,
-        },
-        "runs": cfg.runs,
-        "max_events": cfg.max_events,
-        "seed": cfg.seed,
-    });
-    let config_path = format!("{}/config.json", sweep_dir);
-    let file = File::create(&config_path).expect("config.json の作成に失敗");
-    serde_json::to_writer_pretty(BufWriter::new(file), &sweep_config_json)
-        .expect("config.json の書き込みに失敗");
-
-    // metrics.csv
-    let summary_path = format!("{}/metrics.csv", sweep_dir);
-    let file = File::create(&summary_path).expect("metrics.csv の作成に失敗");
-    let mut wtr = Writer::from_writer(BufWriter::new(file));
 
     let mut idx = 0usize;
     for &features in &feature_vals {
         for &traits in &traits_vals {
-            let mut sum_regions = 0.0f64;
-            let mut n_converged = 0usize;
+            idx += 1;
 
-            for run in 0..cfg.runs {
-                idx += 1;
-                let seed = derive_seed(cfg.seed, features, traits, run);
-                let (converged, n_events, m) = execute_run(
-                    cfg.width,
-                    cfg.height,
-                    features,
-                    traits,
-                    cfg.max_events,
-                    seed,
-                );
+            let params = SimulateParameters {
+                width: sweep_params.width,
+                height: sweep_params.height,
+                features,
+                traits,
+                runs: sweep_params.runs,
+                max_events: sweep_params.max_events,
+                seed,
+            };
 
-                if converged {
-                    n_converged += 1;
-                }
-                sum_regions += m.n_stable_regions as f64;
+            // 子は「その条件の simulate」そのもの．master_seed は親と同じ base で，
+            // 条件が違えば config_hash が違うので run としては別物になる．
+            // 同じ条件の繰り返しは無いので replicate_index は 0．
+            let mut child = Run::start(
+                RunOptions::new(EXPERIMENT, "simulate")
+                    .repo_id(REPO_ID)
+                    .domain(DOMAIN)
+                    .results_root(&args.output_dir)
+                    .parameters(&params)
+                    .expect("runvault: 子 run の parameters の組み立てに失敗")
+                    .seed_pointers(["/seed"])
+                    .master_seed(seed)
+                    .replicate_index(0)
+                    .lineage(Lineage {
+                        sweep_id: Some(sweep_id.clone()),
+                        parent_run_uid: Some(parent_run_uid.clone()),
+                        ..Default::default()
+                    })
+                    .replication(record::replication()),
+            )
+            .expect("runvault: 子 run の開始に失敗");
 
-                let row = SweepRow {
-                    features,
-                    traits,
-                    run,
-                    width: cfg.width,
-                    height: cfg.height,
-                    seed,
-                    converged,
-                    n_events,
-                    n_stable_regions: m.n_stable_regions,
-                    max_region_size: m.max_region_size,
-                    n_distinct_cultures: m.n_distinct_cultures,
-                };
-                wtr.serialize(row).expect("サマリ行の書き込みに失敗");
-            }
+            let trials = run_condition(&mut child, &params, false);
 
-            let mean = sum_regions / (cfg.runs as f64);
             println!(
                 "[{}/{}] f={:<3} q={:<3} → converged={}/{} mean_regions={:.2}",
-                idx, n_total, features, traits, n_converged, cfg.runs, mean
+                idx,
+                n_combos,
+                features,
+                traits,
+                n_converged(&trials),
+                trials.len(),
+                mean_regions(&trials),
             );
+
+            child.finish().expect("runvault: 子 run の完了に失敗");
         }
     }
-    wtr.flush().expect("フラッシュに失敗");
 
-    // latest シンボリックリンク
-    update_latest_symlink(Path::new(&cfg.output_dir), &dir_name);
-
+    let dir = parent.finish().expect("runvault: sweep 親 run の完了に失敗");
     println!("-----------------------------------------------");
     println!("スイープ完了．");
-    println!("メトリクス → {}/metrics.csv", sweep_dir);
-    println!("設定   → {}/config.json", sweep_dir);
+    println!("スイープ定義 → {}/config.json", dir.display());
+    println!("各条件の結果は子 run (subcommand=simulate) の events.jsonl / metrics.csv にあります");
 }
 
 // ---------------------------------------------------------------------------
@@ -457,5 +437,34 @@ fn main() {
     match cli.command {
         Commands::Simulate(args) => cmd_simulate(args),
         Commands::Sweep(args) => cmd_sweep(args),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AxisRange;
+
+    #[test]
+    fn axis_range_includes_both_ends() {
+        let r = AxisRange { min: 5, max: 15, step: 5 };
+        assert_eq!(r.values(), vec![5, 10, 15]);
+    }
+
+    #[test]
+    fn axis_range_stops_before_overshooting_max() {
+        let r = AxisRange { min: 5, max: 14, step: 5 };
+        assert_eq!(r.values(), vec![5, 10]);
+    }
+
+    #[test]
+    fn axis_range_with_zero_step_does_not_loop_forever() {
+        let r = AxisRange { min: 3, max: 3, step: 0 };
+        assert_eq!(r.values(), vec![3]);
+    }
+
+    #[test]
+    fn axis_range_empty_when_min_exceeds_max() {
+        let r = AxisRange { min: 10, max: 5, step: 1 };
+        assert!(r.values().is_empty());
     }
 }

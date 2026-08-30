@@ -2,11 +2,11 @@
 //!
 //! socsim フレームワーク上に構築した文化拡散モデルの公開 API を提供する．
 //! 世界状態(`world`)・相互作用メカニズム(`mechanisms`)・実行ドライバ
-//! (`simulation`)・集計メトリクス(`metrics`)・設定構造体(`config`)を
+//! (`simulation`)・集計メトリクス(`metrics`)・実験記録(`record`)を
 //! モジュールとして公開し，バイナリ(`axelrod`)と統合テストの双方から利用する．
 
-pub mod config;
 pub mod world;
 pub mod mechanisms;
 pub mod simulation;
 pub mod metrics;
+pub mod record;

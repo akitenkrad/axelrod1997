@@ -37,18 +37,33 @@ cargo run --release -- simulate \
 | `--runs` | 10 | 試行回数 |
 | `--max-events` | 1000000 | 1試行あたりの最大イベント数 |
 | `--seed` | — | 乱数シード（ベース値．省略時はランダム） |
-| `--output-dir` | `results` | 出力先ディレクトリ |
+| `--output-dir` | `results` | results ルート（この下に `<experiment>/<run_slug>/` ができる） |
+
+`--seed` を省略した場合もシードは実行時に実体化され，`config.json` の `parameters.seed` と `run.json` の `rng.master_seed` の両方に残ります．「記録されない乱数で走る」ことはありません．
 
 **出力ファイル:**
 
 ```
-results/
-├── latest -> simulate_20260415_120000        # 最新実行へのシンボリックリンク
-├── simulate_20260415_120000/
-│   ├── config.json                           # 実行時設定（subcommand="simulate"）
-│   └── metrics.csv                           # 各 run の指標
-└── ...
+results/                                          # --output-dir で指定する results ルート
+└── axelrod/                                      # experiment
+    ├── latest_finished
+    ├── simulate_20260415_120000_9f2c41ab_3b1d/   # run（<subcommand>_<時刻>_<cfg8>_<exec4>）
+    │   ├── run.json                              # run のメタデータ（lineage / rng / research）
+    │   ├── config.json                           # 実験条件は ["parameters"] の下
+    │   ├── metrics.csv                           # run 全体の集約指標（long 形式）
+    │   ├── events.jsonl                          # 試行ごとの terminal 行
+    │   ├── status.json / manifest.csv
+    │   └── lock/                                 # Cargo.lock / uv.lock の写し
+    └── figures/<run_slug>/                       # 図（run の外．作図は run の記録ではない）
 ```
+
+run ディレクトリの名前は runvault が決めます．`--output-dir` に渡すのは run そのものではなく results ルートです．直近の完了 run は次で引けます．
+
+```bash
+runvault path --experiment axelrod --latest --subcommand simulate
+```
+
+試行（`--runs`）は子 run にはしません．1 つの run の中の観測主体として `events.jsonl` に 1 行ずつ記録されます（`unit_id = trial-N`，`t` = そのイベント数で `t_unit = event`，`budget` = `--max-events`，収束しなければ `censored = true`）．`censored` なら `t == budget` であることは runvault が書き込み時に検査するので，矛盾した行はファイルに届きません．run 全体の集約（収束率・地域数の平均など）は `metrics.csv` の `scope=run` 行です．
 
 ## `sweep`（パラメータスイープ）
 
@@ -77,19 +92,18 @@ cargo run --release -- sweep \
 | `--runs` | 10 | 各条件あたりの試行回数 |
 | `--max-events` | 1000000 | 1試行あたりの最大イベント数 |
 | `--seed` | — | 乱数シード（ベース値） |
-| `--output-dir` | `results` | 出力先ベースディレクトリ |
+| `--output-dir` | `results` | results ルート（この下に `<experiment>/<run_slug>/` ができる） |
 
 **出力ファイル:**
 
+`sweep` は親 run 1 つと，条件 (f, q) ごとの子 run を作ります．親は `config.json` にグリッド定義だけを持ち，指標は書きません（`rng.master_seed` は null）．子は `subcommand = "simulate"` として，単体の `simulate` と同じ形で記録されます（`lineage.parent_run_uid` と `lineage.sweep_id` で親を指す）．子は experiment ディレクトリの下に親と並んで置かれます．
+
 ```
-results/
-├── latest -> sweep_20260415_120500
-├── sweep_20260415_120500/
-│   ├── config.json                           # 実行時設定（subcommand="sweep"）
-│   └── metrics.csv                           # 全 (f, q, run) の結果
+results/axelrod/
+├── sweep_20260415_120500_6d945b66_86c4/      # 親（グリッド定義）
+├── simulate_20260415_120500_17ccc5bc_7076/   # 子 (f=5, q=5)
+├── simulate_20260415_120501_8c542dd1_48f3/   # 子 (f=5, q=10)
 └── ...
 ```
 
-`simulate` / `sweep` いずれもディレクトリ名が `simulate_<ts>` / `sweep_<ts>` と対称で，設定は `config.json`，結果は `metrics.csv` に統一されています．
-
-`metrics.csv` のカラム参照と図の読み方については [可視化](visualization.ja.md) を参照してください．
+各条件の結果は子 run の `events.jsonl` / `metrics.csv` にあります．図の読み方については [可視化](visualization.ja.md) を参照してください．

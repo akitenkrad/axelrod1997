@@ -2,29 +2,37 @@
 """
 visualize.py — Axelrod (1997) 文化拡散モデル 可視化スクリプト（simulate / sweep 両対応）
 
-`config.json` の `"subcommand"` フィールドに応じて，simulate モードの分布・
-指標サマリ・Table 7-2 比較プロット，または sweep モードのヒートマップ・周辺
-折れ線・概要パネルを自動生成する．`config.json` が無い場合はディレクトリ名の
-接頭辞（`simulate_` / `sweep_`）からサブコマンドを推定する．
+出力は runvault の run ディレクトリにある．引数を省略すると
+`runvault path --experiment axelrod --latest --subcommand <simulate|sweep>` で
+直近の完了 run を選び，run.json の `subcommand` からモードを決める．
+
+図は run ディレクトリの**外**（`<results_root>/axelrod/figures/<run_slug>/`）に置く．
+run の `manifest.csv` は `finish()` が確定させているので，後から作る図を run の中に
+入れると記録と食い違う．
 
 Usage:
     uv run python analysis/visualize.py
-    uv run python analysis/visualize.py --results_dir results/simulate_20260417_120000
-    uv run python analysis/visualize.py --results_dir results/latest --output_dir out
+    uv run python analysis/visualize.py --subcommand sweep
+    uv run python analysis/visualize.py --results_root /tmp/rv-axelrod
+    uv run python analysis/visualize.py --results_dir <run ディレクトリ>
+
+`runvault` が PATH に無い場合は環境変数 RUNVAULT で実行ファイルを指す．
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
+from pathlib import Path
 
-import matplotlib.cm as cm  # noqa: F401  (互換性のため残す)
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import runvault_io as rv  # noqa: E402  (同ディレクトリのモジュール)
 
 # --------------------------------------------------------------------------- #
 # 日本語フォント設定・カラーパレット
@@ -57,22 +65,19 @@ TABLE_7_2 = {
 # --------------------------------------------------------------------------- #
 
 
-def load_config(results_dir: str) -> dict | None:
-    path = os.path.join(results_dir, "config.json")
-    if os.path.exists(path):
-        with open(path) as f:
-            return json.load(f)
-    return None
+EXPERIMENT = "axelrod"
+
+# events.jsonl の予約語 `t` は「その試行が終わったステップ数」．Axelrod では 1 ステップ
+# = 1 イベントなので，作図側では従来どおり n_events という名前で扱う．
+T_AS = "n_events"
 
 
-def detect_subcommand(results_dir: str, config: dict | None) -> str:
-    """`config.json` の `subcommand` か，ディレクトリ名の接頭辞からサブコマンドを判定する．"""
-    if config and "subcommand" in config:
-        return str(config["subcommand"])
-    base = os.path.basename(os.path.normpath(results_dir))
-    if base.startswith("sweep"):
-        return "sweep"
-    return "simulate"
+def _trial_frame(run_dir: str) -> pd.DataFrame:
+    """1 つの run の `events.jsonl` を «1 行 1 試行» の表にする．"""
+    df = rv.events_table(run_dir, kind="terminal")
+    df = df.rename(columns={"t": T_AS})
+    df["trial"] = df["unit_id"].str.removeprefix("trial-").astype(int)
+    return df.sort_values("trial").reset_index(drop=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -157,12 +162,10 @@ def _plot_simulate_metrics(summary: dict, out_path: str, subtitle: str) -> None:
     print(f"  保存: {out_path}")
 
 
-def _plot_simulate_vs_table_7_2(df: pd.DataFrame, config: dict | None, out_path: str) -> bool:
-    """config の (features, traits) が Table 7-2 に含まれる場合に比較プロットを保存"""
-    if not config:
-        return False
-    f = config.get("features")
-    q = config.get("traits")
+def _plot_simulate_vs_table_7_2(df: pd.DataFrame, params: dict, out_path: str) -> bool:
+    """条件の (features, traits) が Table 7-2 に含まれる場合に比較プロットを保存"""
+    f = params.get("features")
+    q = params.get("traits")
     if f is None or q is None:
         return False
     key = (int(f), int(q))
@@ -194,18 +197,13 @@ def _plot_simulate_vs_table_7_2(df: pd.DataFrame, config: dict | None, out_path:
     return True
 
 
-def run_simulate_mode(df: pd.DataFrame, config: dict | None, out_dir: str) -> None:
+def run_simulate_mode(df: pd.DataFrame, params: dict, out_dir: str) -> None:
     # サブタイトル作成
-    subtitle_parts = []
-    if config:
-        w = config.get("width", "?")
-        h = config.get("height", "?")
-        f = config.get("features", "?")
-        q = config.get("traits", "?")
-        subtitle_parts.append(f"{w}×{h} グリッド")
-        subtitle_parts.append(f"f={f}, q={q}")
-        subtitle_parts.append(f"{len(df)} runs")
-    subtitle = "，".join(subtitle_parts)
+    subtitle = "，".join([
+        f"{params.get('width', '?')}×{params.get('height', '?')} グリッド",
+        f"f={params.get('features', '?')}, q={params.get('traits', '?')}",
+        f"{len(df)} trials",
+    ])
 
     summary = _summarize_simulate(df)
 
@@ -217,7 +215,7 @@ def run_simulate_mode(df: pd.DataFrame, config: dict | None, out_dir: str) -> No
 
     print("[3/3] Table 7-2 との比較を保存中 ...")
     saved = _plot_simulate_vs_table_7_2(
-        df, config, os.path.join(out_dir, "simulate_vs_table7_2.png")
+        df, params, os.path.join(out_dir, "simulate_vs_table7_2.png")
     )
     if not saved:
         print("  (f, q) が Table 7-2 ベンチマーク外のためスキップ")
@@ -260,15 +258,14 @@ def _summarize_sweep(df: pd.DataFrame, group_cols: list[str], metric_col: str) -
     return s
 
 
-def _make_sweep_subtitle(config: dict | None, df: pd.DataFrame) -> str:
+def _make_sweep_subtitle(params: dict, df: pd.DataFrame) -> str:
     parts: list[str] = []
-    if config:
-        w = config.get("width")
-        h = config.get("height")
-        if w and h:
-            parts.append(f"{w}×{h} グリッド")
-    n_runs = df["run"].nunique() if "run" in df.columns else len(df)
-    parts.append(f"{n_runs} runs / 条件")
+    w = params.get("width")
+    h = params.get("height")
+    if w and h:
+        parts.append(f"{w}×{h} グリッド")
+    n_trials = df["trial"].nunique() if "trial" in df.columns else len(df)
+    parts.append(f"{n_trials} trials / 条件")
     return "，".join(parts)
 
 
@@ -457,9 +454,9 @@ def _save_sweep_overview_2d(summary_2d: pd.DataFrame, out_dir: str, subtitle: st
     print(f"  保存: {out}")
 
 
-def run_sweep_mode(df: pd.DataFrame, config: dict | None, out_dir: str) -> None:
+def run_sweep_mode(df: pd.DataFrame, params: dict, out_dir: str) -> None:
     sweep_type, sweep_cols = _detect_sweep_type(df)
-    subtitle = _make_sweep_subtitle(config, df)
+    subtitle = _make_sweep_subtitle(params, df)
 
     print(f"スイープ種別: {sweep_type} ({', '.join(sweep_cols)})")
     print(f"{subtitle}")
@@ -487,43 +484,68 @@ def parse_args() -> argparse.Namespace:
         description="Axelrod 文化拡散モデル 可視化スクリプト（simulate / sweep 両対応）"
     )
     p.add_argument(
-        "--results_dir", default="results/latest",
-        help="結果ディレクトリ (default: results/latest)",
+        "--results_dir", default=None,
+        help="run ディレクトリを直接指定する（既定: runvault path --latest で選ぶ）",
+    )
+    p.add_argument(
+        "--results_root", default="results",
+        help="results ルート．この下の <experiment>/ から run を探す (default: results)",
+    )
+    p.add_argument(
+        "--subcommand", default="simulate", choices=("simulate", "sweep"),
+        help="--latest でどのサブコマンドの run を選ぶか (default: simulate)．"
+             "付けないと sweep の親を掴むことがあるので必ず指定する",
+    )
+    p.add_argument(
+        "--include-sweep-children", action="store_true",
+        help="--subcommand simulate のとき，sweep の子も候補に入れる"
+             "（既定は --standalone 相当で，手で起こした run だけを見る）",
     )
     p.add_argument(
         "--output_dir", default=None,
-        help="図の保存先ディレクトリ (default: {results_dir}/figures)",
+        help="図の保存先（既定: <results_root>/<experiment>/figures/<run_slug>/）",
     )
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    results_dir = args.results_dir
-    out_dir = args.output_dir if args.output_dir else os.path.join(results_dir, "figures")
 
-    metrics_path = os.path.join(results_dir, "metrics.csv")
-    if not os.path.exists(metrics_path):
-        print(f"エラー: metrics.csv が見つかりません: {metrics_path}", file=sys.stderr)
-        sys.exit(1)
+    # sweep の子は手で起こした run と subcommand が同じなので，--subcommand だけでは
+    # «最後に走った子» が返る．既定では --standalone で単体の run に絞る．
+    # sweep 親は定義上どの sweep にも属さないので，そちらにも付けて問題ない．
+    standalone = not args.include_sweep_children
+    run_dir = args.results_dir or rv.runvault_path(
+        EXPERIMENT,
+        results_root=args.results_root,
+        subcommand=args.subcommand,
+        standalone=standalone,
+    )
+    run_dir = os.path.abspath(run_dir)
 
+    # モードは run.json が持っている．ディレクトリ名からは推定しない．
+    subcmd = rv.run_subcommand(run_dir)
+    params = rv.config_parameters(run_dir)
+
+    # 図は run の外．artifacts/ は実行中に書く出力専用で，後から作る図の場所ではない．
+    out_dir = args.output_dir if args.output_dir else rv.figures_dir(run_dir)
     os.makedirs(out_dir, exist_ok=True)
 
-    config = load_config(results_dir)
-    subcmd = detect_subcommand(results_dir, config)
-
     print("=== Axelrod 文化拡散モデル 可視化 ===")
-    print(f"結果ディレクトリ: {results_dir}")
-    print(f"サブコマンド:     {subcmd}")
-    print(f"出力先:           {out_dir}")
+    print(f"run:        {run_dir}")
+    print(f"サブコマンド: {subcmd}")
+    print(f"出力先:      {out_dir}")
     print("-----------------------------------------------")
 
-    df = pd.read_csv(metrics_path)
-
     if subcmd == "sweep":
-        run_sweep_mode(df, config, out_dir)
+        df = rv.sweep_events_table(run_dir, ["features", "traits"]).rename(
+            columns={"t": T_AS}
+        )
+        df["trial"] = df["unit_id"].str.removeprefix("trial-").astype(int)
+        run_sweep_mode(df, params, out_dir)
     else:
-        run_simulate_mode(df, config, out_dir)
+        df = _trial_frame(run_dir)
+        run_simulate_mode(df, params, out_dir)
 
     print("-----------------------------------------------")
     print("完了．出力ファイル一覧:")

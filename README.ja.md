@@ -21,14 +21,14 @@ cargo run --release -- simulate --features 5 --traits 10 --runs 10 --seed 42
 # Python 可視化ツールのインストール
 uv sync
 
-# 最新の実行結果を可視化 (results/latest を自動参照)
+# 最新の実行結果を可視化 (runvault path --latest が run を選ぶ)
 uv run python analysis/visualize.py
 ```
 
 ## ドキュメント
 
 - [ユースケース](docs/usecases.ja.md) — 本プロジェクトでできること．各ドキュメントへの入口．
-- [CLI](docs/cli.ja.md) — Rust CLI：`simulate` と `sweep` サブコマンド，`results/` 出力レイアウト．
+- [CLI](docs/cli.ja.md) — Rust CLI：`simulate` と `sweep` サブコマンド，`results/` 配下の runvault run レイアウト．
 - [論文再現](docs/reproduction.ja.md) — Table 7-2 ベンチマークと f×q の非対称性，再現方法．
 - [可視化](docs/visualization.ja.md) — Python `analysis/visualize.py` と出力の解釈．
 - [アーキテクチャ](docs/architecture.ja.md) — リポジトリ構成，socsim フレームワーク，参照論文，設計判断．

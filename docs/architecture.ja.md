@@ -15,7 +15,7 @@ axelrod1997/
 │   ├── src/
 │   │   ├── main.rs                    # CLI（simulate / sweep）
 │   │   ├── lib.rs                     # ライブラリクレートのルート
-│   │   ├── config.rs                  # 設定型
+│   │   ├── record.rs                  # runvault への記録（論文メタデータ・terminal イベント・集約指標・シード派生）
 │   │   ├── world.rs                   # socsim WorldState 実装（CellGrid<Culture> + 事前計算 Adjacency）
 │   │   ├── mechanisms.rs              # socsim Mechanism 実装（Axelrod イベント規則 + 安定判定）
 │   │   ├── metrics.rs                 # 安定地域数・最大地域サイズ・相異なる文化数
@@ -23,8 +23,9 @@ axelrod1997/
 │   └── tests/
 │       └── integration_test.rs        # 統合テスト（`cargo test` で実行）
 ├── analysis/                  # Python プロジェクト
+│   ├── runvault_io.py                 # runvault の run ディレクトリを読む共通部品
 │   └── visualize.py                   # simulate / sweep 統一可視化
-└── results/                   # シミュレーション出力（gitignore 対象）
+└── results/                   # runvault の results ルート（gitignore 対象）
 ```
 
 - `cargo run --release -- <サブコマンド>` は workspace ルートから `axelrod-culture` クレートの `axelrod` バイナリを起動します．
@@ -49,7 +50,7 @@ axelrod1997/
 ### 決定性とシード派生
 
 - **乱数**: `socsim_core::SimRng`（ChaCha20 ベースの生成器）が決定的で再現可能な実行を保証します．
-- **シード派生**: 各試行のシードは `socsim_core::derive_seed(base, &[features, traits, run])` で決定的に派生されます．同じベースシードで `sweep` を繰り返すと同じ結果が得られます．
+- **シード派生**: 各試行のシードは `record::trial_seed`（中身は `socsim_core::derive_seed(base, &[features, traits, trial])`）で base シードから決定的に派生されます．同じベースシードで `sweep` を繰り返すと同じ結果が得られます．base シードは `--seed` を省略した場合も起動時に実体化され，run の `master_seed` として記録されます．この決定性は `simulation/src/record.rs` のテストで固定しています．
 - **RNG ストリーム分離**: 単一の root シードから用途別の独立なラベル付きストリームを派生させます — `derive_seed(root, &[0])` を世界初期化（文化ベクトルのランダム割り当て）用，`derive_seed(root, &[1])` をエンジン（メカニズム内のイベント RNG）用とします．ストリームを分離することで初期盤面と動学を切り離します．
 
 ## 設計判断

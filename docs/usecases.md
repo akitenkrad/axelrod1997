@@ -23,7 +23,7 @@ Sweep the number of features $f$ and the number of traits $q$ over a grid to see
 Turn a `simulate` or `sweep` result into figures and read off the qualitative behavior: convergence to a single culture versus the survival of multiple stable regions (global cultural polarization).
 
 - Generate figures from the most recent run: see [Visualization](visualization.md).
-- Read the `metrics.csv` column reference and "how to read typical results": see [Visualization — output interpretation](visualization.md#output-interpretation).
+- Read the `events.jsonl` / `metrics.csv` field reference and "how to read typical results": see [Visualization — output interpretation](visualization.md#output-interpretation).
 
 ## Where to go next
 

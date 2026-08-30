@@ -37,18 +37,33 @@ cargo run --release -- simulate \
 | `--runs` | 10 | Number of runs |
 | `--max-events` | 1000000 | Maximum number of events per run |
 | `--seed` | — | Random seed (base value; random if omitted) |
-| `--output-dir` | `results` | Output directory |
+| `--output-dir` | `results` | Results root (`<experiment>/<run_slug>/` is created under it) |
+
+When `--seed` is omitted the seed is still materialized at start-up and recorded in both `parameters.seed` of `config.json` and `rng.master_seed` of `run.json`, so a run never proceeds on an unrecorded random number.
 
 **Output files:**
 
 ```
-results/
-├── latest -> simulate_20260415_120000        # symlink to the most recent run
-├── simulate_20260415_120000/
-│   ├── config.json                           # run-time configuration (subcommand="simulate")
-│   └── metrics.csv                           # metrics per run
-└── ...
+results/                                          # the results root given by --output-dir
+└── axelrod/                                      # experiment
+    ├── latest_finished
+    ├── simulate_20260415_120000_9f2c41ab_3b1d/   # one run (<subcommand>_<time>_<cfg8>_<exec4>)
+    │   ├── run.json                              # run metadata (lineage / rng / research)
+    │   ├── config.json                           # the condition lives under ["parameters"]
+    │   ├── metrics.csv                           # run-scope metrics, long form
+    │   ├── events.jsonl                          # one terminal line per trial
+    │   ├── status.json / manifest.csv
+    │   └── lock/                                 # copies of Cargo.lock / uv.lock
+    └── figures/<run_slug>/                       # figures (outside the run: a figure is not part of its record)
 ```
+
+runvault names the run directory. `--output-dir` is the results root, not the run itself. The most recent finished run is found with:
+
+```bash
+runvault path --experiment axelrod --latest --subcommand simulate
+```
+
+Trials (`--runs`) are not turned into child runs. They are the observed units of a single run, one `terminal` line each in `events.jsonl` (`unit_id = trial-N`, `t` = its event count with `t_unit = event`, `budget` = `--max-events`, `censored = true` when it did not converge). runvault checks at write time that a censored line has `t == budget`, so a self-contradicting line never reaches the file. The run-level aggregate (convergence rate, mean region count, ...) is the `scope=run` part of `metrics.csv`.
 
 ## `sweep` (parameter sweep)
 
@@ -77,19 +92,18 @@ cargo run --release -- sweep \
 | `--runs` | 10 | Number of runs per condition |
 | `--max-events` | 1000000 | Maximum number of events per run |
 | `--seed` | — | Random seed (base value) |
-| `--output-dir` | `results` | Base output directory |
+| `--output-dir` | `results` | Results root (`<experiment>/<run_slug>/` is created under it) |
 
 **Output files:**
 
+A `sweep` produces one parent run plus one child run per (f, q) condition. The parent holds only the grid definition in `config.json` and writes no metrics (`rng.master_seed` is null). Each child is recorded as `subcommand = "simulate"`, in exactly the same shape as a standalone `simulate`, and points at the parent through `lineage.parent_run_uid` and `lineage.sweep_id`. Children sit beside the parent in the experiment directory, not underneath it.
+
 ```
-results/
-├── latest -> sweep_20260415_120500
-├── sweep_20260415_120500/
-│   ├── config.json                           # run-time configuration (subcommand="sweep")
-│   └── metrics.csv                           # results for every (f, q, run)
+results/axelrod/
+├── sweep_20260415_120500_6d945b66_86c4/      # parent (grid definition)
+├── simulate_20260415_120500_17ccc5bc_7076/   # child (f=5, q=5)
+├── simulate_20260415_120501_8c542dd1_48f3/   # child (f=5, q=10)
 └── ...
 ```
 
-`simulate` and `sweep` use a symmetric directory naming scheme (`simulate_<ts>` / `sweep_<ts>`), and both write their configuration to `config.json` and their results to `metrics.csv`.
-
-For the `metrics.csv` column reference and how to read the figures, see [Visualization](visualization.md).
+Per-condition results live in the children's `events.jsonl` / `metrics.csv`. For how to read the figures, see [Visualization](visualization.md).

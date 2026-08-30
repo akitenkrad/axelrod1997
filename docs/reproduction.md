@@ -40,10 +40,16 @@ cargo run --release -- sweep \
     --runs 10 --seed 42
 ```
 
-Then visualize the result. The visualization detects a `sweep` result automatically and, where applicable, draws a comparison against the Table 7-2 benchmark.
+Then visualize the result. Pass `--subcommand sweep` to select the sweep parent; the mode itself comes from the run's own `run.json`.
 
 ```bash
-uv run python analysis/visualize.py
+uv run python analysis/visualize.py --subcommand sweep
+```
+
+To see one condition on its own — including the comparison against the Table 7-2 benchmark — point at that child run:
+
+```bash
+uv run python analysis/visualize.py --results_dir results/axelrod/<child run_slug>
 ```
 
 For the figures produced and how to interpret them, see [Visualization](visualization.md). For the full flag tables, see [CLI — `sweep`](cli.md#sweep-parameter-sweep).

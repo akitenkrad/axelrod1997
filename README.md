@@ -21,14 +21,14 @@ cargo run --release -- simulate --features 5 --traits 10 --runs 10 --seed 42
 # Install the Python visualization tools
 uv sync
 
-# Visualize the most recent run (results/latest is auto-detected)
+# Visualize the most recent run (runvault path --latest picks it)
 uv run python analysis/visualize.py
 ```
 
 ## Documentation
 
 - [Use cases](docs/usecases.md) — what you can do with this project, with pointers to the rest of the docs.
-- [CLI](docs/cli.md) — the Rust CLI: the `simulate` and `sweep` subcommands and the `results/` output layout.
+- [CLI](docs/cli.md) — the Rust CLI: the `simulate` and `sweep` subcommands and the runvault run layout under `results/`.
 - [Reproduction](docs/reproduction.md) — the Table 7-2 benchmark and the f×q asymmetry, and how to reproduce it.
 - [Visualization](docs/visualization.md) — the Python `analysis/visualize.py` and how to interpret the outputs.
 - [Architecture](docs/architecture.md) — repository structure, the socsim framework, references, and design decisions.

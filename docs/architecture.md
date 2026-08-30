@@ -15,7 +15,7 @@ axelrod1997/
 │   ├── src/
 │   │   ├── main.rs                    # CLI (simulate / sweep)
 │   │   ├── lib.rs                     # library crate root
-│   │   ├── config.rs                  # configuration types
+│   │   ├── record.rs                  # runvault recording (paper metadata, terminal events, run-scope metrics, seed derivation)
 │   │   ├── world.rs                   # socsim WorldState impl (CellGrid<Culture> + precomputed Adjacency)
 │   │   ├── mechanisms.rs              # socsim Mechanism impl (the Axelrod event rule + stability check)
 │   │   ├── metrics.rs                 # stable-region count, max region size, distinct cultures
@@ -23,8 +23,9 @@ axelrod1997/
 │   └── tests/
 │       └── integration_test.rs        # integration tests (run via `cargo test`)
 ├── analysis/                  # Python project
+│   ├── runvault_io.py                 # shared reader for runvault run directories
 │   └── visualize.py                   # unified simulate / sweep visualization
-└── results/                   # simulation output (gitignored)
+└── results/                   # the runvault results root (gitignored)
 ```
 
 - `cargo run --release -- <subcommand>` launches the `axelrod` binary of the `axelrod-culture` crate from the workspace root.
@@ -49,7 +50,7 @@ The driver (`run`) builds the engine with `SimulationBuilder` and uses `Simulati
 ### Determinism and seed derivation
 
 - **RNG**: `socsim_core::SimRng` (a ChaCha20-based generator) guarantees deterministic, reproducible runs.
-- **Seed derivation**: per-run seeds are derived deterministically with `socsim_core::derive_seed(base, &[features, traits, run])`. Repeating a `sweep` with the same base seed yields identical results.
+- **Seed derivation**: per-trial seeds are derived deterministically from the base seed by `record::trial_seed` (which is `socsim_core::derive_seed(base, &[features, traits, trial])`). Repeating a `sweep` with the same base seed yields identical results. The base seed is materialized at start-up even when `--seed` is omitted, and recorded as the run's `master_seed`. The tests in `simulation/src/record.rs` pin this determinism.
 - **RNG stream separation**: from a single root seed, independent labeled streams are derived — `derive_seed(root, &[0])` for world initialization (the random assignment of culture vectors) and `derive_seed(root, &[1])` for the engine (the event RNG inside the mechanism). Keeping the streams separate decouples the initial board from the dynamics.
 
 ## Design decisions

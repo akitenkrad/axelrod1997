@@ -40,10 +40,16 @@ cargo run --release -- sweep \
     --runs 10 --seed 42
 ```
 
-そして結果を可視化します．可視化スクリプトは `sweep` 結果を自動判定し，該当する場合は Table 7-2 ベンチマークとの比較も描画します．
+そして結果を可視化します．`--subcommand sweep` を付けて sweep 親を選びます（モード自体は run 自身の `run.json` から決まります）．
 
 ```bash
-uv run python analysis/visualize.py
+uv run python analysis/visualize.py --subcommand sweep
+```
+
+個別の条件だけを見る場合（Table 7-2 ベンチマークとの比較を含む）は，その子 run を直接指定します．
+
+```bash
+uv run python analysis/visualize.py --results_dir results/axelrod/<子の run_slug>
 ```
 
 生成される図とその解釈については [可視化](visualization.ja.md) を，全フラグ表については [CLI — `sweep`](cli.ja.md#sweep-パラメータスイープ) を参照してください．
