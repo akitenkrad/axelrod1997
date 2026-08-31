@@ -59,6 +59,20 @@ pub struct Trial {
     pub metrics: RunMetrics,
 }
 
+/// `events.jsonl` に書く観測行．
+///
+/// 予約キーだけを持つ．数はここには書かない — 試行の最終値は下の
+/// [`TerminalEvent`] が，条件ごとの集約は `metrics.csv` が正本なので，同じ数を
+/// 2 箇所に置くと食い違う余地ができる．`budget` も書かない (terminal と
+/// `/parameters.max_events` に既にある)．この行が持つのは「その試行をいつ
+/// 見たか」という時間軸だけである．
+#[derive(Serialize)]
+struct ObservationEvent {
+    unit_id: String,
+    t: u64,
+    t_unit: &'static str,
+}
+
 /// `events.jsonl` に書く終端行．
 ///
 /// 先頭 6 フィールドは runvault の予約語 (`terminal` はこれを全部要求する)．
@@ -77,7 +91,34 @@ struct TerminalEvent {
     n_distinct_cultures: usize,
 }
 
-/// 試行 1 本を `terminal` イベントとして書く．
+/// 試行 1 本を `observation` + `terminal` の 2 行として書く．
+///
+/// # 観測の粒度 — 1 試行 1 点 (終端の `t`)
+///
+/// 設計書 §3.4 は「粒度は 1 観測 1 行」「`terminal` は `observation` から
+/// 再構成できる」ことを不変条件に置いている．狙いは，あとから打ち切りの定義を
+/// 変えたくなったときに実験をやり直さずに済ませることである．この実装では，
+/// その狙いに応えられる観測はこの 1 点しかない．
+///
+/// エンジンは `events_per_step = width * height` イベントごとに `is_stable` を
+/// 評価するので，その境界を «観測時刻» と呼ぶことはできる．しかし Axelrod の
+/// 試行から取れる数 (`n_stable_regions` / `max_region_size` /
+/// `n_distinct_cultures`) は最終盤面に対してしか計算していないので，途中の行に
+/// 載せられる値は何も無い．残るのは時刻の列だけで，それは
+/// `{100, 200, ..., t}` — `config.json` の `width` × `height` と terminal の `t`
+/// から完全に復元できる．復元できるものを行にしても情報は増えない．
+///
+/// 増えないぶんの代償は大きい．既定の `simulate` (10×10・10 試行) で実際に
+/// 走ったイベントは合わせて 695,700 で，1 イベント 1 行なら
+/// `events.jsonl` は約 100 MB (打ち切りまで回れば 10 試行 × `--max-events`
+/// = 1,000 万行・約 1.5 GB)．刻みを 1 step (= 100 イベント) に落としても
+/// 6,957 行・約 1.0 MB になる．いま増えるのは観測 10 行 (1.5 KB) だけで，
+/// `events.jsonl` は 2.9 KB から 4.4 KB になる．
+///
+/// そこで「終端で観測した」という 1 点だけを書く．途中の値を測って載せるのは
+/// 記録の直しではなくシミュレーションの変更なので，ここではやらない．
+///
+/// # 不変条件
 ///
 /// 打ち切り (`censored`) の行は `t == budget` でなければならない．ドライバは
 /// `t_max = ceil(max_events / events_per_step)` step 回して `n_events` を
@@ -87,9 +128,23 @@ struct TerminalEvent {
 /// `unwrap_or_else` が試行番号つきで落ちる．
 pub fn log_trial(run: &mut Run, trial: &Trial) {
     let censored = !trial.converged;
+    let unit_id = format!("trial-{}", trial.index);
+
+    // 観測を先に書く．terminal の `t` はこの観測の `t` と一致する — `verify --deep`
+    // は terminal の `unit_id` が observation に現れること，かつ terminal の `t` が
+    // その単位の観測の最大値であることを要求する．
+    run.log_event(
+        "observation",
+        &ObservationEvent {
+            unit_id: unit_id.clone(),
+            t: trial.n_events as u64,
+            t_unit: T_UNIT,
+        },
+    )
+    .unwrap_or_else(|e| panic!("試行 {} の observation の記録に失敗: {e}", trial.index));
 
     let event = TerminalEvent {
-        unit_id: format!("trial-{}", trial.index),
+        unit_id,
         t: trial.n_events as u64,
         t_unit: T_UNIT,
         outcome: if trial.converged {

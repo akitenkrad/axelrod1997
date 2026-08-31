@@ -51,7 +51,7 @@ results/                                          # the results root given by --
     │   ├── run.json                              # run metadata (lineage / rng / research)
     │   ├── config.json                           # the condition lives under ["parameters"]
     │   ├── metrics.csv                           # run-scope metrics, long form
-    │   ├── events.jsonl                          # one terminal line per trial
+    │   ├── events.jsonl                          # one observation + one terminal line per trial
     │   ├── status.json / manifest.csv
     │   └── lock/                                 # copies of Cargo.lock / uv.lock
     └── figures/<run_slug>/                       # figures (outside the run: a figure is not part of its record)
@@ -63,7 +63,7 @@ runvault names the run directory. `--output-dir` is the results root, not the ru
 runvault path --experiment axelrod --latest --subcommand simulate
 ```
 
-Trials (`--runs`) are not turned into child runs. They are the observed units of a single run, one `terminal` line each in `events.jsonl` (`unit_id = trial-N`, `t` = its event count with `t_unit = event`, `budget` = `--max-events`, `censored = true` when it did not converge). runvault checks at write time that a censored line has `t == budget`, so a self-contradicting line never reaches the file. The run-level aggregate (convergence rate, mean region count, ...) is the `scope=run` part of `metrics.csv`.
+Trials (`--runs`) are not turned into child runs. They are the observed units of a single run, two lines each in `events.jsonl`: an `observation` at the moment the trial was looked at, and the `terminal` that ends it (`unit_id = trial-N`, `t` = its event count with `t_unit = event`, `budget` = `--max-events`, `censored = true` when it did not converge). A trial is looked at once, at its end, so the two lines share the same `t` — the numbers of the trial are only computed on the final board, so an intermediate line would carry no value that is not already derivable from `config.json` and the `terminal` line. runvault checks at write time that a censored line has `t == budget`, so a self-contradicting line never reaches the file. The run-level aggregate (convergence rate, mean region count, ...) is the `scope=run` part of `metrics.csv`.
 
 ## `sweep` (parameter sweep)
 

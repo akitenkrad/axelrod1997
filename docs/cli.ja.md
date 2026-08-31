@@ -51,7 +51,7 @@ results/                                          # --output-dir で指定する
     │   ├── run.json                              # run のメタデータ（lineage / rng / research）
     │   ├── config.json                           # 実験条件は ["parameters"] の下
     │   ├── metrics.csv                           # run 全体の集約指標（long 形式）
-    │   ├── events.jsonl                          # 試行ごとの terminal 行
+    │   ├── events.jsonl                          # 試行ごとの observation 行 + terminal 行
     │   ├── status.json / manifest.csv
     │   └── lock/                                 # Cargo.lock / uv.lock の写し
     └── figures/<run_slug>/                       # 図（run の外．作図は run の記録ではない）
@@ -63,7 +63,7 @@ run ディレクトリの名前は runvault が決めます．`--output-dir` に
 runvault path --experiment axelrod --latest --subcommand simulate
 ```
 
-試行（`--runs`）は子 run にはしません．1 つの run の中の観測主体として `events.jsonl` に 1 行ずつ記録されます（`unit_id = trial-N`，`t` = そのイベント数で `t_unit = event`，`budget` = `--max-events`，収束しなければ `censored = true`）．`censored` なら `t == budget` であることは runvault が書き込み時に検査するので，矛盾した行はファイルに届きません．run 全体の集約（収束率・地域数の平均など）は `metrics.csv` の `scope=run` 行です．
+試行（`--runs`）は子 run にはしません．1 つの run の中の観測主体として `events.jsonl` に 2 行ずつ記録されます．試行を見た時点の `observation` と，それを終える `terminal` です（`unit_id = trial-N`，`t` = そのイベント数で `t_unit = event`，`budget` = `--max-events`，収束しなければ `censored = true`）．試行を見るのは終端の 1 回だけなので，2 行の `t` は一致します — 試行から取れる数は最終盤面に対してしか計算していないため，途中の行に載せられる値は `config.json` と `terminal` 行から復元できるもの以外に無いからです．`censored` なら `t == budget` であることは runvault が書き込み時に検査するので，矛盾した行はファイルに届きません．run 全体の集約（収束率・地域数の平均など）は `metrics.csv` の `scope=run` 行です．
 
 ## `sweep`（パラメータスイープ）
 

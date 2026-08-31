@@ -65,7 +65,11 @@ results/axelrod/figures/<run_slug>/
 
 ## 出力の解釈
 
-### events.jsonl の 1 行（試行 1 本．`schema` は `terminal`）
+### events.jsonl の行（試行 1 本につき 2 行）
+
+試行はまず予約キー `unit_id` / `t` / `t_unit` だけを持つ `observation` 行を書き，続けて同じ `unit_id`・同じ `t` を持つ下記の `terminal` 行を書きます．数は `terminal` 行だけが持つので，2 行が食い違うことはありません．
+
+#### `terminal` 行
 
 | フィールド | 説明 |
 |-------|------|

@@ -65,7 +65,11 @@ results/axelrod/figures/<run_slug>/
 
 ## Output interpretation
 
-### One line of events.jsonl (one trial; `schema` is `terminal`)
+### Lines of events.jsonl (one trial writes two)
+
+A trial writes an `observation` line carrying only the reserved keys `unit_id` / `t` / `t_unit`, then the `terminal` line below with the same `unit_id` and the same `t`. The numbers live on the `terminal` line alone, so the two can never disagree.
+
+#### The `terminal` line
 
 | Field | Description |
 |--------|-------------|
