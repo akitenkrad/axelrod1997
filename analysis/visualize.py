@@ -23,16 +23,12 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
-from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import runvault_io as rv  # noqa: E402  (同ディレクトリのモジュール)
+from runvault import read as rv
 
 # --------------------------------------------------------------------------- #
 # 日本語フォント設定・カラーパレット

@@ -23,7 +23,6 @@ axelrod1997/
 │   └── tests/
 │       └── integration_test.rs        # 統合テスト（`cargo test` で実行）
 ├── analysis/                  # Python プロジェクト
-│   ├── runvault_io.py                 # runvault の run ディレクトリを読む共通部品
 │   └── visualize.py                   # simulate / sweep 統一可視化
 └── results/                   # runvault の results ルート（gitignore 対象）
 ```

@@ -8,4 +8,11 @@ dependencies = [
     "numpy>=1.26",
     "pandas>=2.2",
     "seaborn>=0.13",
+    # run ディレクトリの読み方は runvault が持つ (read 側は pandas を使うので extra)．
+    "runvault[read]",
 ]
+
+[tool.uv.sources]
+# run ディレクトリの読み書きの正本は rs-runvault にある．path 依存にすると
+# 開発機のディレクトリ配置に縛られるので git 依存にする．
+runvault = { git = "https://github.com/akitenkrad/rs-runvault", subdirectory = "python" }

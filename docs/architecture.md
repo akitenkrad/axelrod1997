@@ -23,7 +23,6 @@ axelrod1997/
 │   └── tests/
 │       └── integration_test.rs        # integration tests (run via `cargo test`)
 ├── analysis/                  # Python project
-│   ├── runvault_io.py                 # shared reader for runvault run directories
 │   └── visualize.py                   # unified simulate / sweep visualization
 └── results/                   # the runvault results root (gitignored)
 ```
