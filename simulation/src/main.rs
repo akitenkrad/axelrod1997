@@ -1,7 +1,7 @@
 use axelrod_culture::{metrics, record, simulation};
 
 use clap::{Parser, Subcommand};
-use runvault::{Lineage, Run, RunOptions};
+use runvault::{Lineage, Run, RunOptions, Stage};
 use serde::Serialize;
 
 use metrics::count_stable_regions;
@@ -176,7 +176,16 @@ impl AxisRange {
 ///
 /// 試行は子 run にしない．1 つの run の中の観測主体 (`unit_id = trial-N`) として
 /// 扱うので，生存時間解析はこの run の `events.jsonl` だけで組める．
-fn run_condition(rv: &mut Run, p: &SimulateParameters, verbose: bool) -> Vec<Trial> {
+///
+/// 進捗の 1 単位は 1 試行．`stage` は呼び出し側が開ける — `simulate` では 1 条件の
+/// `runs` 試行が，`sweep` ではグリッド全体の試行が 1 つの stage になり，後者は
+/// 条件をまたいでも割合が途中で 100% に戻らない．
+fn run_condition(
+    rv: &mut Run,
+    p: &SimulateParameters,
+    verbose: bool,
+    stage: &mut Stage,
+) -> Vec<Trial> {
     let mut trials = Vec::with_capacity(p.runs);
 
     for index in 0..p.runs {
@@ -216,6 +225,9 @@ fn run_condition(rv: &mut Run, p: &SimulateParameters, verbose: bool) -> Vec<Tri
 
         record::log_trial(rv, &trial);
         trials.push(trial);
+        // 収束しなかった試行も数える．数えているのは «試みた仕事» であって
+        // «うまくいった仕事» ではない．
+        stage.tick();
     }
 
     record::log_run_summary(rv, &trials);
@@ -278,7 +290,14 @@ fn cmd_simulate(args: SimulateArgs) {
     println!("出力先: {}", rv.dir().display());
     println!("---------------------------------------");
 
-    let trials = run_condition(&mut rv, &params, true);
+    // 1 試行 = 1 単位．試行ごとの費用は max_events で頭打ちになり，収束する条件
+    // でも実測で 2 倍の幅しかなかった (10x10 の既定グリッドで 0.70M〜1.42M
+    // イベント) ので，重み付けではなく数える．そもそも 1 試行が何イベントで
+    // 終わるかは走らせるまで分からず，測っていない費用モデルは自信をもって
+    // 外れた見積もりを出す．
+    let mut stage = rv.stage("trials", params.runs);
+    let trials = run_condition(&mut rv, &params, true, &mut stage);
+    stage.close();
 
     println!("---------------------------------------");
     println!(
@@ -367,6 +386,12 @@ fn cmd_sweep(args: SweepArgs) {
     println!("出力先: {}", parent.dir().display());
     println!("-----------------------------------------------");
 
+    // グリッド全体で 1 つの stage．条件ごとに開け直すと 9 個の小さな 100% が
+    // 並ぶだけで，スイープ全体のどこにいるかは分からない．単位は条件ではなく
+    // 試行 — 条件は既定でも 9 個しかなく，5% 刻みでは 1 条件ごとにしか報告
+    // されない．
+    let mut stage = parent.stage("trials", n_total);
+
     let mut idx = 0usize;
     for &features in &feature_vals {
         for &traits in &traits_vals {
@@ -404,7 +429,7 @@ fn cmd_sweep(args: SweepArgs) {
             )
             .expect("runvault: 子 run の開始に失敗");
 
-            let trials = run_condition(&mut child, &params, false);
+            let trials = run_condition(&mut child, &params, false, &mut stage);
 
             println!(
                 "[{}/{}] f={:<3} q={:<3} → converged={}/{} mean_regions={:.2}",
@@ -420,6 +445,10 @@ fn cmd_sweep(args: SweepArgs) {
             child.finish().expect("runvault: 子 run の完了に失敗");
         }
     }
+
+    // manifest.csv は finish() で書かれる．その後に progress.log へ 1 行でも
+    // 足すと，manifest と食い違うダイジェストになる．
+    stage.close();
 
     let dir = parent.finish().expect("runvault: sweep 親 run の完了に失敗");
     println!("-----------------------------------------------");
