@@ -19,6 +19,9 @@ use record::{Trial, DOMAIN, EXPERIMENT, REPO_ID};
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+    /// Development run: write it under results/_scratch/ so it is never synced to the vault.
+    #[arg(long, global = true)]
+    scratch: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -253,7 +256,7 @@ fn mean_regions(trials: &[Trial]) -> f64 {
 // simulate サブコマンド
 // ---------------------------------------------------------------------------
 
-fn cmd_simulate(args: SimulateArgs) {
+fn cmd_simulate(args: SimulateArgs, scratch: bool) {
     // シードを実体化してから記録する．--seed 省略時に試行側で rand::random に
     // 落とすと，実際に使われたシードがどこにも残らない．
     let seed = args.seed.unwrap_or_else(rand::random::<u64>);
@@ -270,6 +273,7 @@ fn cmd_simulate(args: SimulateArgs) {
 
     let mut rv = Run::start(
         RunOptions::new(EXPERIMENT, "simulate")
+            .scratch(scratch)
             .repo_id(REPO_ID)
             .domain(DOMAIN)
             .results_root(&args.output_dir)
@@ -317,7 +321,7 @@ fn cmd_simulate(args: SimulateArgs) {
 // sweep サブコマンド
 // ---------------------------------------------------------------------------
 
-fn cmd_sweep(args: SweepArgs) {
+fn cmd_sweep(args: SweepArgs, scratch: bool) {
     let seed = args.seed.unwrap_or_else(rand::random::<u64>);
 
     let sweep_params = SweepParameters {
@@ -354,6 +358,7 @@ fn cmd_sweep(args: SweepArgs) {
     // sweep_id は runvault が親の run_slug で埋める．
     let parent = Run::start(
         RunOptions::new(EXPERIMENT, "sweep")
+            .scratch(scratch)
             .repo_id(REPO_ID)
             .domain(DOMAIN)
             .results_root(&args.output_dir)
@@ -412,6 +417,7 @@ fn cmd_sweep(args: SweepArgs) {
             // 同じ条件の繰り返しは無いので replicate_index は 0．
             let mut child = Run::start(
                 RunOptions::new(EXPERIMENT, "simulate")
+                    .scratch(scratch)
                     .repo_id(REPO_ID)
                     .domain(DOMAIN)
                     .results_root(&args.output_dir)
@@ -463,9 +469,10 @@ fn cmd_sweep(args: SweepArgs) {
 
 fn main() {
     let cli = Cli::parse();
+    let scratch = cli.scratch;
     match cli.command {
-        Commands::Simulate(args) => cmd_simulate(args),
-        Commands::Sweep(args) => cmd_sweep(args),
+        Commands::Simulate(args) => cmd_simulate(args, scratch),
+        Commands::Sweep(args) => cmd_sweep(args, scratch),
     }
 }
 
