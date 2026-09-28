@@ -1,3 +1,45 @@
-# Metric descriptions are not written yet (MYTASK-3382). Until they are,
-# runvault records undeclared metrics instead of refusing them.
-require_docs = false
+# 指標が何を測っているか (runvault の宣言．rs-runvault docs/metrics.ja.md)．
+#
+# 名前は `simulation/src/record.rs` と `simulation/src/metrics.rs` が書いているものと
+# 一致していなければならない．試行ごとの終端値は `events.jsonl` にあり，ここで
+# 宣言するのは試行群を 1 本の run に集約した値だけである．
+#
+# `direction` は «どちらが良いか»．文化地域数・文化数・収束所要時間はいずれも
+# Axelrod 模型の記述量であって成績ではないため `none` を書く．
+
+[metrics."n_converged"]
+meaning   = "安定状態に収束した試行の本数"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+[metrics."convergence_rate"]
+meaning   = "試行群のうち安定状態に収束したものの割合"
+unit      = "ratio"
+direction = "none"
+range     = [0.0, 1.0]
+scope     = ["run"]
+
+[metrics."mean_n_stable_regions"]
+meaning   = "試行群にわたる安定文化地域数の平均．地域は同じ文化ベクトルを持つサイトの 4 連結成分である"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+[metrics."mean_max_region_size"]
+meaning   = "試行群にわたる最大文化地域のサイト数の平均"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+[metrics."mean_n_distinct_cultures"]
+meaning   = "試行群にわたる最終盤面の相異なる文化ベクトル数の平均"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+[metrics."mean_n_events"]
+meaning   = "試行群にわたる停止までの相互作用イベント数の平均"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
